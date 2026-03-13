@@ -38,7 +38,7 @@ def load_user(user_id):
 MODELSCOPE_BASE_URL = "https://api-inference.modelscope.cn/v1/"
 MODEL_NAME = "Qwen/Qwen3-32B"
 VL_MODEL_NAME = "Qwen/Qwen3.5-397B-A17B"
-API_KEY = os.getenv('ms-87b1bc50-008f-440c-bc3c-8f14e92f3bc3', '')
+API_KEY = os.getenv('MODELSCOPE_API_KEY', '')
 
 # 图像大小限制（base64 解码后最大 4MB）
 MAX_IMAGE_SIZE = 4 * 1024 * 1024
