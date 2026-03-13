@@ -284,8 +284,8 @@ async function deleteMealRecord(recordId) {
     }
 }
 
-// 保存饮食记录
-async function saveMealRecord(mealType, totalCalories, foods, advice) {
+// 保存饮食记录，并获取 Nutri-Pal 像素宠物反馈
+async function saveMealRecord(mealType, totalCalories, foods, advice, healthScore) {
     try {
         const response = await fetch('/api/meals', {
             method: 'POST',
@@ -294,12 +294,18 @@ async function saveMealRecord(mealType, totalCalories, foods, advice) {
                 meal_type: mealType,
                 total_calories: totalCalories,
                 foods: foods,
-                advice: advice
+                dietary_advice: advice,
+                health_score: healthScore
             })
         });
         
         if (response.ok) {
+            const data = await response.json();
             loadMealRecords();
+            // 如果后端返回 Nutri-Pal 反馈，在对话区展示
+            if (data && data.nutri_pal) {
+                addNutriPalMessage(data.nutri_pal);
+            }
         }
     } catch (error) {
         console.error('保存饮食记录失败:', error);
@@ -770,7 +776,8 @@ async function sendFoodMessage(message) {
                 state.currentMeal,
                 result.total_calories,
                 result.foods,
-                result.dietary_advice
+                result.dietary_advice,
+                result.health_score
             );
         }
     } catch (error) {
@@ -988,6 +995,41 @@ function addResultCard(result) {
     scrollToBottom();
 }
 
+// 添加 Nutri-Pal 像素宠物反馈
+function addNutriPalMessage(nutriPal) {
+    if (!nutriPal) return;
+
+    const messageEl = document.createElement('div');
+    messageEl.className = 'message assistant nutri-pal-message';
+
+    const stateMap = {
+        'Active': '轻盈活跃',
+        'Sluggish': '有点慵懒',
+        'Energetic': '能量满格',
+        'Evolving': '进化中'
+    };
+    const stateText = stateMap[nutriPal.avatar_state_change] || '状态更新';
+
+    messageEl.innerHTML = `
+        <div class="nutri-pal-card">
+            <div class="nutri-pal-header">
+                <span class="nutri-pal-avatar">🧩</span>
+                <span class="nutri-pal-title">Nutri-Pal 像素小伙伴</span>
+                <span class="nutri-pal-state">${escapeHtml(stateText)}</span>
+            </div>
+            <div class="nutri-pal-dialogue">
+                ${escapeHtml(nutriPal.character_dialogue || '')}
+            </div>
+            <div class="nutri-pal-summary">
+                ${escapeHtml(nutriPal.nutritional_summary || '')}
+            </div>
+        </div>
+    `;
+
+    chatContainer.appendChild(messageEl);
+    scrollToBottom();
+}
+
 // 添加澄清卡片
 function addClarificationCard(result) {
     state.pendingClarification = {
@@ -1098,7 +1140,8 @@ async function confirmClarification() {
                 state.currentMeal,
                 result.total_calories,
                 result.foods,
-                result.dietary_advice
+                result.dietary_advice,
+                result.health_score
             );
         }
     } catch (error) {
@@ -1533,7 +1576,8 @@ async function sendVisionMessage(imageBase64) {
                 state.currentMeal,
                 result.total_calories,
                 result.foods,
-                result.dietary_advice
+                result.dietary_advice,
+                result.health_score
             );
         }
     } catch (error) {

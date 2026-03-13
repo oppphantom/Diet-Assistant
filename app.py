@@ -38,7 +38,7 @@ def load_user(user_id):
 MODELSCOPE_BASE_URL = "https://api-inference.modelscope.cn/v1/"
 MODEL_NAME = "Qwen/Qwen3-32B"
 VL_MODEL_NAME = "Qwen/Qwen3.5-397B-A17B"
-API_KEY = os.getenv('MODELSCOPE_API_KEY', '')
+API_KEY = os.getenv('ms-87b1bc50-008f-440c-bc3c-8f14e92f3bc3', '')
 
 # 图像大小限制（base64 解码后最大 4MB）
 MAX_IMAGE_SIZE = 4 * 1024 * 1024
@@ -297,6 +297,100 @@ def calculate_visualizations(total_calories):
     }
 
 
+def generate_nutri_pal_feedback(foods, total_calories, health_score, friend_healthy=False):
+    """
+    根据饮食分析结果生成 Nutri-Pal 像素宠物反馈。
+
+    返回结构：
+    {
+        "nutritional_summary": str,
+        "avatar_state_change": "Active" | "Sluggish" | "Energetic" | "Evolving",
+        "character_dialogue": str
+    }
+    """
+    foods = foods or []
+    try:
+        health_score = float(health_score or 0)
+    except (TypeError, ValueError):
+        health_score = 0
+
+    # 关键字粗略判断饮食风格
+    joined_text = " ".join(
+        f"{item.get('name', '')} {item.get('quantity', '')}"
+        for item in foods
+        if isinstance(item, dict)
+    )
+
+    sugar_fat_keywords = [
+        "奶茶", "可乐", "汽水", "甜", "糖", "蛋糕", "饼干", "巧克力",
+        "炸鸡", "薯条", "油炸", "烧烤", "披萨", "油条"
+    ]
+    protein_keywords = [
+        "鸡胸", "鸡肉", "鸡蛋", "牛肉", "羊肉", "鱼", "虾", "豆腐",
+        "豆干", "牛奶", "酸奶", "蛋白粉", "瘦肉"
+    ]
+    clean_keywords = ["清蒸", "水煮", "沙拉", "蔬菜", "青菜", "凉拌", "全麦"]
+
+    sugar_fat_hits = sum(1 for k in sugar_fat_keywords if k in joined_text)
+    protein_hits = sum(1 for k in protein_keywords if k in joined_text)
+    clean_hits = sum(1 for k in clean_keywords if k in joined_text)
+
+    # 状态判定（优先按健康分，其次按风格）
+    if health_score >= 90:
+        avatar_state = "Evolving"
+    elif health_score >= 75:
+        avatar_state = "Energetic"
+    elif health_score >= 55:
+        avatar_state = "Active"
+    else:
+        avatar_state = "Sluggish"
+
+    # 如果明显高糖高油且分数一般，强制偏 Sluggish
+    if sugar_fat_hits >= 2 and health_score < 70:
+        avatar_state = "Sluggish"
+    # 如果蛋白和干净命中多，状态向 Energetic / Evolving 倾斜
+    if (protein_hits + clean_hits) >= 2 and health_score >= 80:
+        avatar_state = "Evolving"
+    elif (protein_hits + clean_hits) >= 2 and health_score >= 65:
+        avatar_state = "Energetic"
+
+    # 营养总结文案（简短）
+    if avatar_state == "Evolving":
+        nutritional_summary = "这顿整体很干净均衡，小伙伴正在悄悄进化中。"
+    elif avatar_state == "Energetic":
+        nutritional_summary = "蛋白和整体质量不错，适合补充能量和恢复。"
+    elif avatar_state == "Active":
+        nutritional_summary = "这顿还算均衡，负担不重，小伙伴可以轻松活动。"
+    else:  # Sluggish
+        if sugar_fat_hits:
+            nutritional_summary = "这顿稍微偏油偏甜，小伙伴有点小撑。"
+        else:
+            nutritional_summary = "这顿能量有点集中，小伙伴有点想躺一会儿。"
+
+    # 角色台词（保持轻松、贴近宠物感受）
+    if avatar_state == "Evolving":
+        dialogue = "哇，这顿好高级，我感觉体内在发光，再来几次我就要正式进化啦！"
+    elif avatar_state == "Energetic":
+        dialogue = "这波补给真给力，我全身都充满能量，想出去蹦跶两圈！"
+    elif avatar_state == "Active":
+        dialogue = "吃得刚刚好，我状态挺轻盈的，下一顿再稍微注意一点就更棒啦～"
+    else:  # Sluggish
+        if sugar_fat_hits:
+            dialogue = "这顿好满足，我有点小肚腩鼓鼓的……下一顿来点清爽蔬菜，我就能重新跳起来！"
+        else:
+            dialogue = "我被这波能量按在地上小憩一下，下一顿清爽一点，我们一起慢慢调回来～"
+
+    # 好友同步进化触发（由前端通过 friend_healthy 标记）
+    if friend_healthy and avatar_state in ["Energetic", "Evolving"]:
+        dialogue += " 你和好友的小伙伴一起吃得很棒，感觉要来一场同步进化派对了！"
+
+    return {
+        "nutritional_summary": nutritional_summary,
+        "avatar_state_change": avatar_state,
+        "character_dialogue": dialogue
+    }
+
+
 def parse_ai_response(response_text):
     """解析 AI 返回的 JSON"""
     try:
@@ -485,7 +579,7 @@ def get_meals():
 def save_meal():
     """保存饮食记录"""
     data = request.json
-    
+
     record = MealRecord(
         user_id=current_user.id,
         meal_type=data.get('meal_type', ''),
@@ -494,10 +588,34 @@ def save_meal():
         health_score=data.get('health_score', 0),
         dietary_advice=data.get('dietary_advice', '')
     )
-    
+
     db.session.add(record)
     db.session.commit()
-    return jsonify({'success': True, 'record': record.to_dict()})
+
+    # 生成 Nutri-Pal 像素宠物反馈
+    try:
+        foods = data.get('foods', [])
+        total_calories = data.get('total_calories', 0)
+        health_score = data.get('health_score', 0)
+        friend_healthy = bool(data.get('friend_healthy') or data.get('sync_with_friend'))
+        nutri_pal = generate_nutri_pal_feedback(
+            foods=foods,
+            total_calories=total_calories,
+            health_score=health_score,
+            friend_healthy=friend_healthy
+        )
+    except Exception:
+        # 出现异常时优雅降级为不返回 Nutri-Pal 信息
+        nutri_pal = None
+
+    response_payload = {
+        'success': True,
+        'record': record.to_dict()
+    }
+    if nutri_pal is not None:
+        response_payload['nutri_pal'] = nutri_pal
+
+    return jsonify(response_payload)
 
 
 @app.route('/api/meals/<int:meal_id>', methods=['DELETE'])
